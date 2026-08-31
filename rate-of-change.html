@@ -36,10 +36,10 @@
   .grp { display: flex; flex-direction: column; gap: 6px; }
   .grp.wide { flex: 1 1 320px; min-width: 260px; }
   .grp label { font-weight: 600; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-  .grp input[type="number"] {
-    width: 84px;
+  .grp.coef input {
+    width: 96px;
     font: inherit;
-    padding: 6px 8px;
+    padding: 8px 10px;
     border: 1px solid #bdc1c6;
     border-radius: 8px;
   }
@@ -87,21 +87,17 @@
   <h1>Rate of change</h1>
 
   <div class="controls">
-    <div class="grp">
-      <label>a <input id="a-num" type="number" step="0.1"></label>
-      <input id="a-rng" type="range" min="-3" max="3" step="0.05">
+    <div class="grp coef">
+      <label>a <input id="a-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     </div>
-    <div class="grp">
-      <label>b <input id="b-num" type="number" step="0.1"></label>
-      <input id="b-rng" type="range" min="-6" max="6" step="0.05">
+    <div class="grp coef">
+      <label>b <input id="b-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     </div>
-    <div class="grp">
-      <label>c <input id="c-num" type="number" step="0.5"></label>
-      <input id="c-rng" type="range" min="-12" max="12" step="0.1">
+    <div class="grp coef">
+      <label>c <input id="c-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     </div>
-    <div class="grp">
-      <label>x&#8321; <input id="x1-num" type="number" step="0.25"></label>
-      <input id="x1-rng" type="range" min="-8" max="8" step="0.05">
+    <div class="grp coef">
+      <label>x&#8321; <input id="x1-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     </div>
 
     <div class="grp wide">
@@ -141,10 +137,10 @@
   var KEY = "rate-of-change-v1";
 
   var DEFAULTS = {
-    a: -0.5, b: 1, c: 4,
-    x1: -2,
-    h: 3, hSign: 1,
-    view: { cx: 0, cy: -2, halfW: 6 }
+    a: -0.5, b: 3, c: -0.5,
+    x1: 1,
+    h: 2, hSign: 1,           // x2 = x1 + h = 3
+    view: { cx: 0, cy: 0, halfW: 6 }
   };
 
   var state = JSON.parse(JSON.stringify(DEFAULTS));
@@ -453,47 +449,68 @@
 
   // ---- controls sync -------------------------------------------------
   var el = {
-    aNum: document.getElementById("a-num"), aRng: document.getElementById("a-rng"),
-    bNum: document.getElementById("b-num"), bRng: document.getElementById("b-rng"),
-    cNum: document.getElementById("c-num"), cRng: document.getElementById("c-rng"),
-    x1Num: document.getElementById("x1-num"), x1Rng: document.getElementById("x1-rng"),
+    aNum: document.getElementById("a-num"),
+    bNum: document.getElementById("b-num"),
+    cNum: document.getElementById("c-num"),
+    x1Num: document.getElementById("x1-num"),
     hRng: document.getElementById("h-rng"), hLabel: document.getElementById("h-label")
   };
 
+  // Write current state into every field. Never call this from a field's own
+  // "input" handler (it would clobber a partially typed number).
   function syncInputs() {
-    el.aNum.value = state.a; el.aRng.value = clamp(state.a, -3, 3);
-    el.bNum.value = state.b; el.bRng.value = clamp(state.b, -6, 6);
-    el.cNum.value = state.c; el.cRng.value = clamp(state.c, -12, 12);
-    el.x1Num.value = state.x1; el.x1Rng.value = clamp(state.x1, -8, 8);
-    el.hRng.value = tFromH(curH());
-    var x2 = state.x1 + curH();
-    el.hLabel.textContent = "h = " + fmt(curH()) + "   x₂ = " + fmt(x2);
+    el.aNum.value = fmt(state.a, 6);
+    el.bNum.value = fmt(state.b, 6);
+    el.cNum.value = fmt(state.c, 6);
+    el.x1Num.value = fmt(state.x1, 6);
+    syncH();
   }
 
-  function setCoef(which, v) {
-    v = num(v, state[which]);
-    state[which] = v;
-    syncInputs(); draw(); save();
+  function syncH() {
+    el.hRng.value = tFromH(curH());
+    el.hLabel.textContent = "h = " + fmt(curH()) + "   x₂ = " + fmt(state.x1 + curH());
   }
-  function setX1(v) {
-    state.x1 = num(v, state.x1);
-    syncInputs(); draw(); save();
+
+  // Called while dragging P1 on the graph — safe to rewrite the x1 field here.
+  function setX1FromDrag(v) {
+    state.x1 = v;
+    el.x1Num.value = fmt(v, 6);
+    syncH();
+    draw(); save();
   }
   function setH(h) {
     h = clampMag(h, HMIN, HMAX);
     state.h = Math.abs(h);
     state.hSign = h < 0 ? -1 : 1;
-    syncInputs(); draw(); save();
+    syncH();
+    draw(); save();
   }
 
-  el.aNum.addEventListener("input", function () { setCoef("a", this.value); });
-  el.aRng.addEventListener("input", function () { setCoef("a", this.value); });
-  el.bNum.addEventListener("input", function () { setCoef("b", this.value); });
-  el.bRng.addEventListener("input", function () { setCoef("b", this.value); });
-  el.cNum.addEventListener("input", function () { setCoef("c", this.value); });
-  el.cRng.addEventListener("input", function () { setCoef("c", this.value); });
-  el.x1Num.addEventListener("input", function () { setX1(this.value); });
-  el.x1Rng.addEventListener("input", function () { setX1(this.value); });
+  // Typing in a coefficient field: accept any partial entry (e.g. "-", "1.",
+  // ".5", "") without fighting the user. Apply the value only when it parses to
+  // a finite number, and never rewrite the field's text on input.
+  function bindField(input, which) {
+    input.addEventListener("input", function () {
+      var v = parseFloat(this.value);
+      if (!isFinite(v)) return;
+      state[which] = v;
+      if (which === "x1") syncH();
+      draw(); save();
+    });
+    // On blur, normalize whatever is left (revert blanks/garbage to state).
+    input.addEventListener("change", function () {
+      var v = parseFloat(this.value);
+      if (!isFinite(v)) v = state[which];
+      state[which] = v;
+      this.value = fmt(v, 6);
+      if (which === "x1") syncH();
+      draw(); save();
+    });
+  }
+  bindField(el.aNum, "a");
+  bindField(el.bNum, "b");
+  bindField(el.cNum, "c");
+  bindField(el.x1Num, "x1");
 
   el.hRng.addEventListener("input", function () {
     var h = hFromT(parseFloat(this.value));
@@ -568,7 +585,7 @@
     computeGeom();
     var p = pointer(e);
     if (drag === "p1") {
-      setX1(wx(p.x));
+      setX1FromDrag(wx(p.x));
     } else if (drag === "p2") {
       setH(wx(p.x) - state.x1);
     } else if (drag === "pan") {
