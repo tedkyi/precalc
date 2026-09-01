@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Rate of change — a·eˣ</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #202124;
+    background: #fff;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 {
+    margin: 0;
+    padding: 10px 16px;
+    font-size: 22px;
+    font-weight: 600;
+    border-bottom: 1px solid #e6e8ec;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #e6e8ec;
+    align-items: flex-start;
+  }
+  .grp { display: flex; flex-direction: column; gap: 6px; }
+  .grp.wide { flex: 1 1 320px; min-width: 260px; }
+  .grp label { font-weight: 600; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .grp.coef input {
+    width: 96px;
+    font: inherit;
+    padding: 8px 10px;
+    border: 1px solid #bdc1c6;
+    border-radius: 8px;
+  }
+  .grp input[type="range"] { width: 160px; height: 28px; }
+  .grp.wide input[type="range"] { width: 100%; }
+
+  .qbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .qbtns button { min-width: 62px; }
+
+  button {
+    font: inherit;
+    font-weight: 600;
+    padding: 9px 12px;
+    min-height: 40px;
+    border: 1px solid #bdc1c6;
+    border-radius: 10px;
+    background: #f8f9fa;
+    color: #202124;
+    cursor: pointer;
+  }
+  button:active { background: #e8eaed; }
+  .grp.btns { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+
+  .hlab { font-variant-numeric: tabular-nums; color: #5f6368; font-weight: 600; }
+
+  .readouts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    padding: 10px 16px;
+    background: #f1f3f4;
+    border-bottom: 1px solid #e6e8ec;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 15px;
+  }
+  .readouts .full { flex-basis: 100%; }
+  .readouts b { color: #202124; }
+  .readouts .arc { font-weight: 700; }
+
+  .graph { position: relative; flex: 1 1 auto; min-height: 220px; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+</style>
+</head>
+<body>
+  <h1>Rate of change &mdash; a&middot;e<sup>x</sup></h1>
+
+  <div class="controls">
+    <div class="grp coef">
+      <label>a <input id="a-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    </div>
+    <div class="grp coef">
+      <label>x&#8321; <input id="x1-num" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    </div>
+
+    <div class="grp wide">
+      <label>P&#8322; offset&nbsp;&nbsp;h = x&#8322; &minus; x&#8321;&nbsp;&nbsp;<span class="hlab" id="h-label"></span></label>
+      <input id="h-rng" type="range" min="-1" max="1" step="0.001">
+      <div class="qbtns">
+        <button data-h="-1">&minus;1</button>
+        <button data-h="-0.1">&minus;0.1</button>
+        <button data-h="-0.01">&minus;0.01</button>
+        <button data-h="-0.001">&minus;0.001</button>
+        <button data-h="0.001">+0.001</button>
+        <button data-h="0.01">+0.01</button>
+        <button data-h="0.1">+0.1</button>
+        <button data-h="1">+1</button>
+      </div>
+    </div>
+
+    <div class="grp btns">
+      <button id="zin">Zoom +</button>
+      <button id="zout">Zoom &minus;</button>
+      <button id="reset">Reset view</button>
+      <button id="fit">Fit</button>
+    </div>
+  </div>
+
+  <div class="readouts" id="readouts"></div>
+
+  <div class="graph">
+    <canvas id="cv"></canvas>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var HMIN = 1e-3, HMAX = 8;
+  var KEY = "rate-of-change-2-v1";
+
+  var DEFAULTS = {
+    a: 1,
+    x1: 0,
+    h: 1, hSign: 1,           // x2 = x1 + h = 1
+    view: { cx: 0, cy: 2, halfW: 4 }
+  };
+
+  var state = JSON.parse(JSON.stringify(DEFAULTS));
+
+  var canvas = document.getElementById("cv");
+  var ctx = canvas.getContext("2d");
+  var cssW = 1, cssH = 1;
+  var g = { xmin: -6, xmax: 6, ymin: -6, ymax: 6, ppu: 1 };
+
+  // ---- persistence ---------------------------------------------------------
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify({
+        a: state.a, x1: state.x1,
+        h: state.h, hSign: state.hSign, view: state.view
+      }));
+    } catch (e) {}
+  }
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      if (s && typeof s.a === "number") {
+        state.a = num(s.a, DEFAULTS.a);
+        state.x1 = num(s.x1, DEFAULTS.x1);
+        state.h = clamp(Math.abs(num(s.h, DEFAULTS.h)), HMIN, HMAX);
+        state.hSign = s.hSign < 0 ? -1 : 1;
+        if (s.view && typeof s.view.halfW === "number") {
+          state.view = {
+            cx: num(s.view.cx, 0),
+            cy: num(s.view.cy, 2),
+            halfW: Math.max(0.05, num(s.view.halfW, 4))
+          };
+        }
+      }
+    } catch (e) {}
+  }
+
+  // ---- helpers -----------------------------------------------------------
+  function num(v, dflt) { v = parseFloat(v); return isFinite(v) ? v : dflt; }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function clampMag(v, lo, hi) {
+    var s = v < 0 ? -1 : 1, m = clamp(Math.abs(v), lo, hi);
+    return s * m;
+  }
+  function f(x) { return state.a * Math.exp(x); }
+  // d/dx [a·eˣ] = a·eˣ  (drawn only as a comparison line — no calculus shown)
+  function tangentSlope(x) { return state.a * Math.exp(x); }
+  function curH() { return state.hSign * state.h; }
+
+  function hFromT(t) {
+    if (t === 0) return state.hSign * HMIN;
+    var s = t < 0 ? -1 : 1;
+    return s * HMIN * Math.pow(HMAX / HMIN, Math.abs(t));
+  }
+  function tFromH(h) {
+    var s = h < 0 ? -1 : 1;
+    var m = clamp(Math.abs(h), HMIN, HMAX);
+    return s * Math.log(m / HMIN) / Math.log(HMAX / HMIN);
+  }
+
+  function fmt(n, dp) {
+    if (dp == null) dp = 3;
+    if (!isFinite(n)) return "—";
+    var p = Math.pow(10, dp);
+    var v = Math.round(n * p) / p;
+    if (Object.is(v, -0)) v = 0;
+    return String(v);
+  }
+
+  // ---- geometry (world <-> screen), equal scale on both axes ------------
+  function computeGeom() {
+    var halfW = state.view.halfW;
+    var ppu = cssW / (2 * halfW);          // pixels per world unit
+    var halfH = (cssH / ppu) / 2;
+    g.xmin = state.view.cx - halfW;
+    g.xmax = state.view.cx + halfW;
+    g.ymin = state.view.cy - halfH;
+    g.ymax = state.view.cy + halfH;
+    g.ppu = ppu;
+  }
+  function sx(x) { return (x - g.xmin) / (g.xmax - g.xmin) * cssW; }
+  function sy(y) { return (g.ymax - y) / (g.ymax - g.ymin) * cssH; }
+  function wx(px) { return g.xmin + px / cssW * (g.xmax - g.xmin); }
+  function wy(py) { return g.ymax - py / cssH * (g.ymax - g.ymin); }
+
+  function niceStep(raw) {
+    var p = Math.pow(10, Math.floor(Math.log10(raw)));
+    var n = raw / p;
+    var s = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
+    return s * p;
+  }
+
+  // ---- drawing ---------------------------------------------------------
+  function resize() {
+    var r = canvas.getBoundingClientRect();
+    cssW = Math.max(1, r.width);
+    cssH = Math.max(1, r.height);
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    computeGeom();
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    drawGrid();
+    drawCurve();
+    drawStaircase();
+    drawTangent();
+    drawSecant();
+
+    var x2 = state.x1 + curH();
+    drawPoint(state.x1, f(state.x1), "#d93025", "P₁");
+    drawPoint(x2, f(x2), "#0b8043", "P₂");
+
+    drawLegend();
+    updateReadouts();
+  }
+
+  function drawGrid() {
+    var step = niceStep((g.xmax - g.xmin) / 10);
+    var dec = Math.max(0, -Math.floor(Math.log10(step)) + 0);
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#e6e8ec";
+    ctx.fillStyle = "#5f6368";
+    ctx.font = "12px -apple-system, system-ui, sans-serif";
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+
+    var x0 = Math.ceil(g.xmin / step) * step;
+    for (var x = x0; x <= g.xmax; x += step) {
+      var px = sx(x);
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, cssH); ctx.stroke();
+    }
+    var y0 = Math.ceil(g.ymin / step) * step;
+    for (var y = y0; y <= g.ymax; y += step) {
+      var py = sy(y);
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(cssW, py); ctx.stroke();
+    }
+
+    // axes
+    ctx.strokeStyle = "#9aa0a6";
+    ctx.lineWidth = 1.5;
+    var ax = sx(0), ay = sy(0);
+    var axInView = ax >= 0 && ax <= cssW;
+    var ayInView = ay >= 0 && ay <= cssH;
+    if (ayInView) { ctx.beginPath(); ctx.moveTo(0, ay); ctx.lineTo(cssW, ay); ctx.stroke(); }
+    if (axInView) { ctx.beginPath(); ctx.moveTo(ax, 0); ctx.lineTo(ax, cssH); ctx.stroke(); }
+
+    // tick labels along axes (fall back to edges if axis off-screen)
+    ctx.fillStyle = "#5f6368";
+    var labelY = ayInView ? clamp(ay + 3, 2, cssH - 14) : cssH - 14;
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    for (var xx = x0; xx <= g.xmax; xx += step) {
+      if (Math.abs(xx) < step / 2) continue;
+      ctx.fillText(trimZero(xx.toFixed(dec)), sx(xx), labelY);
+    }
+    var labelX = axInView ? clamp(ax + 4, 2, cssW - 2) : 4;
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    for (var yy = y0; yy <= g.ymax; yy += step) {
+      if (Math.abs(yy) < step / 2) continue;
+      ctx.fillText(trimZero(yy.toFixed(dec)), labelX, sy(yy));
+    }
+  }
+  function trimZero(s) { return s.indexOf(".") < 0 ? s : s.replace(/\.?0+$/, ""); }
+
+  function drawCurve() {
+    ctx.strokeStyle = "#202124";
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    var first = true;
+    for (var px = 0; px <= cssW; px += 2) {
+      var y = f(wx(px));
+      var py = sy(y);
+      if (first) { ctx.moveTo(px, py); first = false; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  function lineAcross(slope, x0, y0, style, width, dash) {
+    var yA = y0 + slope * (g.xmin - x0);
+    var yB = y0 + slope * (g.xmax - x0);
+    ctx.save();
+    ctx.strokeStyle = style;
+    ctx.lineWidth = width;
+    ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    ctx.moveTo(sx(g.xmin), sy(yA));
+    ctx.lineTo(sx(g.xmax), sy(yB));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawTangent() {
+    var m = tangentSlope(state.x1);
+    lineAcross(m, state.x1, f(state.x1), "#ea8600", 2.5, [9, 7]);
+  }
+
+  function drawSecant() {
+    var x1 = state.x1, x2 = x1 + curH();
+    var dx = x2 - x1;
+    if (Math.abs(dx) < 1e-12) return;
+    var m = (f(x2) - f(x1)) / dx;
+    lineAcross(m, x1, f(x1), "#1a73e8", 3, []);
+  }
+
+  function drawStaircase() {
+    var x1 = state.x1, y1 = f(x1);
+    var x2 = x1 + curH(), y2 = f(x2);
+    var p1 = { x: sx(x1), y: sy(y1) };
+    var cxp = sx(x2), cyp = sy(y1), p2 = { x: sx(x2), y: sy(y2) };
+
+    ctx.save();
+    ctx.strokeStyle = "#9aa0a6";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y); ctx.lineTo(cxp, cyp);   // run
+    ctx.lineTo(p2.x, p2.y);                          // rise
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = "#5f6368";
+    ctx.font = "13px -apple-system, system-ui, sans-serif";
+    if (Math.abs(cxp - p1.x) > 26) {
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("Δx = " + fmt(x2 - x1), (p1.x + cxp) / 2, cyp + 4);
+    }
+    if (Math.abs(p2.y - cyp) > 24) {
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText("Δy = " + fmt(y2 - y1), cxp + 6, (cyp + p2.y) / 2);
+    }
+  }
+
+  function drawPoint(x, y, color, label) {
+    var px = sx(x), py = sy(y);
+    ctx.beginPath(); ctx.arc(px, py, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+
+    ctx.font = "bold 15px -apple-system, system-ui, sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3; ctx.strokeStyle = "#fff";
+    ctx.strokeText(label, px + 11, py - 8);
+    ctx.fillStyle = color;
+    ctx.fillText(label, px + 11, py - 8);
+  }
+
+  function drawLegend() {
+    var items = [
+      ["#1a73e8", "secant — average rate of change", false],
+      ["#ea8600", "tangent at P₁", true]
+    ];
+    ctx.save();
+    ctx.font = "13px -apple-system, system-ui, sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    var x = 12, y = 16;
+    for (var i = 0; i < items.length; i++) {
+      ctx.strokeStyle = items[i][0];
+      ctx.lineWidth = 3;
+      ctx.setLineDash(items[i][2] ? [9, 7] : []);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 30, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#3c4043";
+      ctx.fillText(items[i][1], x + 38, y);
+      y += 20;
+    }
+    ctx.restore();
+  }
+
+  // ---- readouts -------------------------------------------------------
+  function updateReadouts() {
+    var x1 = state.x1, y1 = f(x1);
+    var x2 = x1 + curH(), y2 = f(x2);
+    var dx = x2 - x1, dy = y2 - y1;
+    var arc = Math.abs(dx) < 1e-12 ? "undefined" : fmt(dy / dx);
+    var tan = fmt(tangentSlope(x1));
+
+    var eq = "y = " + fmt(state.a) + " · eˣ";
+
+    document.getElementById("readouts").innerHTML =
+      '<span class="full"><b>' + eq + '</b></span>' +
+      '<span>P₁ = (' + fmt(x1) + ', ' + fmt(y1) + ')</span>' +
+      '<span>P₂ = (' + fmt(x2) + ', ' + fmt(y2) + ')</span>' +
+      '<span>h = x₂ − x₁ = ' + fmt(dx) + '</span>' +
+      '<span>Δx = ' + fmt(dx) + '</span>' +
+      '<span>Δy = ' + fmt(dy) + '</span>' +
+      '<span class="full arc">Average rate of change = Δy / Δx = ' +
+        fmt(dy) + ' / ' + fmt(dx) + ' = ' + arc + '</span>' +
+      '<span>Tangent slope at P₁ = ' + tan + '</span>';
+  }
+
+  // ---- controls sync -------------------------------------------------
+  var el = {
+    aNum: document.getElementById("a-num"),
+    x1Num: document.getElementById("x1-num"),
+    hRng: document.getElementById("h-rng"), hLabel: document.getElementById("h-label")
+  };
+
+  // Write current state into every field. Never call this from a field's own
+  // "input" handler (it would clobber a partially typed number).
+  function syncInputs() {
+    el.aNum.value = fmt(state.a, 6);
+    el.x1Num.value = fmt(state.x1, 6);
+    syncH();
+  }
+
+  function syncH() {
+    el.hRng.value = tFromH(curH());
+    el.hLabel.textContent = "h = " + fmt(curH()) + "   x₂ = " + fmt(state.x1 + curH());
+  }
+
+  // Called while dragging P1 on the graph — safe to rewrite the x1 field here.
+  function setX1FromDrag(v) {
+    state.x1 = v;
+    el.x1Num.value = fmt(v, 6);
+    syncH();
+    draw(); save();
+  }
+  function setH(h) {
+    h = clampMag(h, HMIN, HMAX);
+    state.h = Math.abs(h);
+    state.hSign = h < 0 ? -1 : 1;
+    syncH();
+    draw(); save();
+  }
+
+  // Typing in a coefficient field: accept any partial entry (e.g. "-", "1.",
+  // ".5", "") without fighting the user. Apply the value only when it parses to
+  // a finite number, and never rewrite the field's text on input.
+  function bindField(input, which) {
+    input.addEventListener("input", function () {
+      var v = parseFloat(this.value);
+      if (!isFinite(v)) return;
+      state[which] = v;
+      if (which === "x1") syncH();
+      draw(); save();
+    });
+    // On blur, normalize whatever is left (revert blanks/garbage to state).
+    input.addEventListener("change", function () {
+      var v = parseFloat(this.value);
+      if (!isFinite(v)) v = state[which];
+      state[which] = v;
+      this.value = fmt(v, 6);
+      if (which === "x1") syncH();
+      draw(); save();
+    });
+  }
+  bindField(el.aNum, "a");
+  bindField(el.x1Num, "x1");
+
+  el.hRng.addEventListener("input", function () {
+    var h = hFromT(parseFloat(this.value));
+    state.h = Math.abs(h);
+    state.hSign = h < 0 ? -1 : 1;
+    var x2 = state.x1 + curH();
+    el.hLabel.textContent = "h = " + fmt(curH()) + "   x₂ = " + fmt(x2);
+    draw(); save();
+  });
+
+  var qbtns = document.querySelectorAll(".qbtns button");
+  for (var i = 0; i < qbtns.length; i++) {
+    qbtns[i].addEventListener("click", function () {
+      setH(parseFloat(this.getAttribute("data-h")));
+    });
+  }
+
+  document.getElementById("zin").addEventListener("click", function () {
+    state.view.halfW = Math.max(0.02, state.view.halfW * 0.8); draw(); save();
+  });
+  document.getElementById("zout").addEventListener("click", function () {
+    state.view.halfW = Math.min(500, state.view.halfW * 1.25); draw(); save();
+  });
+  document.getElementById("reset").addEventListener("click", function () {
+    state.view = JSON.parse(JSON.stringify(DEFAULTS.view)); draw(); save();
+  });
+  document.getElementById("fit").addEventListener("click", function () {
+    fitView(); draw(); save();
+  });
+
+  function fitView() {
+    var xs = [state.x1, state.x1 + curH()];
+    var ys = xs.map(f);
+    var xmn = Math.min.apply(null, xs), xmx = Math.max.apply(null, xs);
+    var ymn = Math.min.apply(null, ys), ymx = Math.max.apply(null, ys);
+    ymn = Math.min(ymn, 0); ymx = Math.max(ymx, 0);
+    var padX = Math.max((xmx - xmn) * 0.35, 1.5);
+    var padY = Math.max((ymx - ymn) * 0.35, 1.5);
+    xmn -= padX; xmx += padX; ymn -= padY; ymx += padY;
+    state.view.cx = (xmn + xmx) / 2;
+    state.view.cy = (ymn + ymx) / 2;
+    state.view.halfW = Math.max((xmx - xmn) / 2, (ymx - ymn) / 2 * (cssW / cssH));
+  }
+
+  // ---- pointer interaction ----------------------------------------
+  var drag = null, panStart = null;
+
+  function pointer(e) {
+    var r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  canvas.addEventListener("pointerdown", function (e) {
+    computeGeom();
+    var p = pointer(e);
+    var x2 = state.x1 + curH();
+    var d1 = Math.hypot(p.x - sx(state.x1), p.y - sy(f(state.x1)));
+    var d2 = Math.hypot(p.x - sx(x2), p.y - sy(f(x2)));
+    if (d2 <= 26 && d2 <= d1) drag = "p2";
+    else if (d1 <= 26) drag = "p1";
+    else {
+      drag = "pan";
+      panStart = { x: p.x, y: p.y, cx: state.view.cx, cy: state.view.cy };
+    }
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    computeGeom();
+    var p = pointer(e);
+    if (drag === "p1") {
+      setX1FromDrag(wx(p.x));
+    } else if (drag === "p2") {
+      setH(wx(p.x) - state.x1);
+    } else if (drag === "pan") {
+      var spanX = g.xmax - g.xmin, spanY = g.ymax - g.ymin;
+      state.view.cx = panStart.cx - (p.x - panStart.x) / cssW * spanX;
+      state.view.cy = panStart.cy + (p.y - panStart.y) / cssH * spanY;
+      draw();
+    }
+    e.preventDefault();
+  });
+
+  function endDrag(e) {
+    if (!drag) return;
+    if (drag === "pan") save();
+    drag = null;
+    try { canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  // pinch-to-zoom (two pointers)
+  var pts = {};
+  var pinch = null;
+  canvas.addEventListener("pointerdown", function (e) { pts[e.pointerId] = pointer(e); track(); });
+  canvas.addEventListener("pointermove", function (e) {
+    if (pts[e.pointerId]) pts[e.pointerId] = pointer(e);
+    if (pinch) doPinch();
+  });
+  canvas.addEventListener("pointerup", function (e) { delete pts[e.pointerId]; track(); });
+  canvas.addEventListener("pointercancel", function (e) { delete pts[e.pointerId]; track(); });
+
+  function track() {
+    var ids = Object.keys(pts);
+    if (ids.length === 2) {
+      drag = null; // cancel single-point drag while pinching
+      var a = pts[ids[0]], b = pts[ids[1]];
+      pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), halfW: state.view.halfW };
+    } else {
+      pinch = null;
+    }
+  }
+  function doPinch() {
+    var ids = Object.keys(pts);
+    if (ids.length !== 2) return;
+    var a = pts[ids[0]], b = pts[ids[1]];
+    var d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (d > 5 && pinch.dist > 5) {
+      state.view.halfW = clamp(pinch.halfW * pinch.dist / d, 0.02, 500);
+      draw(); save();
+    }
+  }
+
+  // ---- init ---------------------------------------------------------
+  load();
+  syncInputs();
+  if (window.ResizeObserver) {
+    new ResizeObserver(resize).observe(document.querySelector(".graph"));
+  }
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", function () { setTimeout(resize, 150); });
+  resize();
+})();
+</script>
+</body>
+</html>
